@@ -1,6 +1,6 @@
 ## Code for reproducing the key results of our paper: MCI cluster prediction
 
-Lefort-Besnard J, Naveau M, Delcroix N, Cignetti F, Decker L
+Lefort-Besnard J, Naveau M, Delcroix N, Decker L, Cignetti F (for the ADNI)
 
 Please cite this paper when using the code for your research.
 
