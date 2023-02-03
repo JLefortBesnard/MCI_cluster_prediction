@@ -1,5 +1,5 @@
-# script to extract grey matter volume per ROI using Yeo atlas.
-# standardize the data all together and remove variance from TIV and age.
+# Compute regression analyses for each MCI subgroup versus controls using GM or CSF level
+
 
 import pandas as pd
 import numpy as np
