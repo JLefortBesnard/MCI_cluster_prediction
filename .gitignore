@@ -1,1 +1,6 @@
 *.TMP
+drop
+functions.py
+1.*
+2.*
+6.visualisation*
