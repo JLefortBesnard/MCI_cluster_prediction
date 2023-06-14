@@ -1,30 +1,65 @@
-# Compute regression analyses for each MCI subgroup versus controls using GM or CSF level
-
+"""
+Run regression analysis MCI subgroups versus controls
+2023
+Author:   
+        Jeremy Lefort-Besnard   jlefortbesnard (at) tuta (dot) io
+duration = 30min
+"""
 
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import seaborn as sns
 from sklearn.model_selection import StratifiedShuffleSplit
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from matplotlib import pyplot as plt
+from sklearn.svm import  LinearSVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
 import time
+import os
 import itertools
 from scipy import stats #v1.5.2
 import nibabel as nib
 from nilearn import datasets as ds
 from nilearn.image import resample_img
 from nilearn.input_data import NiftiLabelsMasker
+from nilearn.signal import clean
 
 np.random.seed(0)
 
+# required path
+cluster = pd.read_excel('_createdDataframes/df_scores_std.xlsx', index_col=0)['cluster']
+df_scores = pd.read_excel('_createdDataframes/df_scores.xlsx', index_col=0) # 1032 subjects
+df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford_combat')
+smwc1_path = pd.read_excel('_createdDataframes/mri_paths.xlsx')['smwc1_path'].iloc[0]
+df_csf1 = pd.read_csv("filesFromADNI/ADNI_cognitiveTests/CSF.csv")
+df_csf2 = pd.read_csv("filesFromADNI/ADNI_cognitiveTests/csf_adni1_go_2.csv")
+
+if not os.path.exists('/home/jlefortb/ADNI_project/revision/_pickles/gm_predictions'):
+    os.mkdir('/home/jlefortb/ADNI_project/revision/_pickles/gm_predictions')
+if not os.path.exists('/home/jlefortb/ADNI_project/revision/_pickles/csf_predictions'):
+    os.mkdir('/home/jlefortb/ADNI_project/revision/_pickles/csf_predictions')
+
+# get information about sex, age, session per diag and cluster
+df_scores['cluster'] = cluster
+df_scores['Group'][df_scores['Group'] == 'LMCI'] = 'MCI'
+df_scores['Group'][df_scores['Group'] == 'EMCI'] = 'MCI'
+np.unique(df_scores[df_scores['Group'] == 'MCI']['Session'], return_counts=True)
+np.unique(df_scores[df_scores['Group'] == 'MCI']['Sex'], return_counts=True)
+np.unique(df_scores[df_scores['cluster'] == 'Low']['Session'], return_counts=True)
+np.unique(df_scores[df_scores['cluster'] == 'CN']['Session'], return_counts=True)
+
+
 # load required dataframe
 # grey matter quantity per roi
-df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford')
+X = df.values
+
 # group label
-cluster = pd.read_excel('_createdDataframe/df_scores_std.xlsx', index_col=0)['cluster']
 df['cluster'] = cluster
 
 front_lob_cn = df['Left Frontal Pole'][df["cluster"] == 'CN'].mean()
@@ -33,6 +68,7 @@ front_lob_middle = df['Left Frontal Pole'][df["cluster"] == 'Middle'].mean()
 front_lob_high = df['Left Frontal Pole'][df["cluster"] == 'High'].mean()
 
 assert front_lob_cn > front_lob_high > front_lob_middle > front_lob_low
+
 
 #################################################
 # compute logistic regression for each category #
@@ -61,15 +97,12 @@ def rotateTickLabels(ax, rotation, which, rotation_mode='anchor', ha='left'):
 			t.set_rotation_mode(rotation_mode)
 
 class prediction:
-	def __init__(self, cluster0, cluster1, df_gm):
+	def __init__(self, cluster0, cluster1, df_gm, algorithm):
 		self.label0 = cluster0
 		self.label1 = cluster1
 		self.df = df_gm.query('cluster == "{}" or cluster == "{}"'.format(cluster0, cluster1))
 		self.N0 = len(self.df[self.df["cluster"] == self.label0])
 		self.N1 = len(self.df[self.df["cluster"] == self.label1])
-		print('')
-		print('Running {} (n={}) vs {} (n={})'.format(self.label0, self.N0, self.label1, self.N1))
-		print('')
 		self.X = self.df[self.df.columns[:-1]].values
 		self.Y = self.df[self.df.columns[-1]]
 		# categorize
@@ -77,10 +110,16 @@ class prediction:
 		self.Y[self.Y == self.label1] = 1
 		self.Y = self.Y.values.astype('int')
 		self.labels = self.df.columns[:-1].values
-		self.title = "{}_vs_{}".format(self.label0, self.label1)
+		self.algorithm = algorithm
+		self.algo_title = str(algorithm)[:5]
+		self.title = "{}_vs_{}_{}".format(self.label0, self.label1, self.algo_title)
+		print('')
+		print('Running {} (n={}) vs {} (n={}) with {}'.format(self.label0, self.N0, self.label1, self.N1, self.algo_title))
+		print('')
+
 
 	def logReg(self, train_inds, test_inds):
-		clf = LogisticRegression(penalty='l2', class_weight='balanced')
+		clf = self.algorithm
 		# fit algorithm on training data
 		clf.fit(self.X[train_inds], self.Y[train_inds])
 		# compute accuracies on testing data
@@ -90,6 +129,7 @@ class prediction:
 		# save coefficients
 		# save prediction and real Y for confusion matrix
 		return [acc, clf.coef_[0, :], y_pred, self.Y[test_inds]]
+
 
 	def runs(self, n_runs):
 		# keep information for the confusion matrix
@@ -171,7 +211,7 @@ class prediction:
 			permutation_accs_cv = []
 			permutation_coefs_cv = []
 			for train_index, test_index in sss.split(self.X, Y_perm):
-				clf = LogisticRegression(penalty='l2', class_weight='balanced')
+				clf = self.algorithm
 				# fit algorithm on training data
 				clf.fit(self.X[train_index], Y_perm[train_index])
 				# compute accuracies on testing data
@@ -255,48 +295,55 @@ class prediction:
 			sign_coefs_nii.to_filename("_niftiFiles/{}_significant.nii".format(self.title)) # transform as nii and save
 			# save significant weigths
 			coefs_nii = masker.inverse_transform(np.array(self.df_coefs['coef'].values.astype('float64')).reshape(1, 96))
-			coefs_nii.to_filename("_niftiFiles/{}_coeffs.nii".format(self.title)) # transform as nii and save
+			coefs_nii.to_filename("_niftiFiles/{}_coefs.nii".format(self.title)) # transform as nii and save
 
 
 
-def run_all_steps(Y0, Y1, df):
-	analysis = prediction(Y0, Y1, df)
+def run_all_steps(Y0, Y1, df, algorithm):
+	analysis = prediction(Y0, Y1, df, algorithm)
 	print("   ***    ")
 	print("STARTING ", analysis.title)
 	print("   ***    ")
 	time.sleep(2)
-	analysis.runs(100)
+	analysis.runs(1000)
 	analysis.plot_confusion()
-	analysis.lauch_permutation(100)
+	analysis.lauch_permutation(1000)
 	analysis.coefficent_testing()
 	analysis.print_results()
-	smwc1_path = pd.read_excel('_createdDataframe/mri_paths.xlsx')['smwc1_path'].iloc[0]
+	smwc1_path = pd.read_excel('_createdDataframes/mri_paths.xlsx')['smwc1_path'].iloc[0]
 	analysis.saving(smwc1_path)
 	return analysis
 
 
 
-###############################################################
+#################################
+#### GREY MATTER ANALYSES #######
+#################################
+
+
+###########
+# LOG REG #
+###########
+
 # run prediction analysis per group with gm per roi as inputs #
-###############################################################
 np.random.seed(0)
 
 # smc vs cn
-analysis_1 = run_all_steps('SMC', 'CN', df)
+# analysis_1 = run_all_steps('SMC', 'CN', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # high vs cn
-analysis_2 = run_all_steps('High', 'CN', df)
+analysis_2 = run_all_steps('High', 'CN', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # middle vs cn
-analysis_3 = run_all_steps('Middle', 'CN', df)
+analysis_3 = run_all_steps('Middle', 'CN', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # Low vs cn
-analysis_4 = run_all_steps('Low', 'CN', df)
+analysis_4 = run_all_steps('Low', 'CN', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # middle vs high
-analysis_5 = run_all_steps('Middle', 'High', df)
+# analysis_5 = run_all_steps('Middle', 'High', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # Low vs high
-analysis_6 = run_all_steps('Low', 'High', df)
+# analysis_6 = run_all_steps('Low', 'High', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 # Low vs middle
-analysis_7 = run_all_steps('Low', 'Middle', df)
+# analysis_7 = run_all_steps('Low', 'Middle', df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 
-analyses = [analysis_1, analysis_2, analysis_3, analysis_4, analysis_5, analysis_6, analysis_7]
+analyses = [analysis_2, analysis_3, analysis_4]
 dict_visualisation = {}
 for analysis in analyses:
 	print(analysis.title)
@@ -306,18 +353,117 @@ for analysis in analyses:
 	print("Is accuracy significant => {}, percentile={} ".format(analysis.accuracy_testing()[0],analysis.accuracy_testing()[1]))
 
 df_visu = pd.DataFrame.from_dict(dict_visualisation)
-df_visu.to_pickle("_pickles/df_visu_gm")
+df_visu.to_pickle("_pickles/df_visu_gm_logreg")
 
 
-########################################################
+
+###########
+# SVM #
+###########
+
+
+# run prediction analysis per group with gm per roi as inputs #
+np.random.seed(0)
+
+# # smc vs cn
+# analysis_1 = run_all_steps('SMC', 'CN', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# high vs cn
+analysis_2 = run_all_steps('High', 'CN', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# middle vs cn
+analysis_3 = run_all_steps('Middle', 'CN', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# Low vs cn
+analysis_4 = run_all_steps('Low', 'CN', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# # middle vs high
+# analysis_5 = run_all_steps('Middle', 'High', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# # Low vs high
+# analysis_6 = run_all_steps('Low', 'High', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+# # Low vs middle
+# analysis_7 = run_all_steps('Low', 'Middle', df, algorithm=LinearSVC(penalty='l2', dual=False, class_weight='balanced'))
+
+analyses = [analysis_2, analysis_3, analysis_4]
+dict_visualisation = {}
+for analysis in analyses:
+	print(analysis.title)
+	dict_visualisation[analysis.title] = analysis.all_accs
+	print('{} (n={}) vs {} (n={})'.format(analysis.label0, analysis.N0, analysis.label1, analysis.N1))
+	print("Main accuracy : Mean = ", np.mean(analysis.accs), " Std = ", np.std(analysis.accs))
+	print("Is accuracy significant => {}, percentile={} ".format(analysis.accuracy_testing()[0],analysis.accuracy_testing()[1]))
+
+df_visu = pd.DataFrame.from_dict(dict_visualisation)
+df_visu.to_pickle("_pickles/df_visu_gm_svm")
+
+
+
+####################
+# Ridge classifier #
+####################
+
+###############################################################
+# run prediction analysis per group with gm per roi as inputs #
+###############################################################
+np.random.seed(0)
+
+# # smc vs cn
+# analysis_1 = run_all_steps('SMC', 'CN', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# high vs cn
+analysis_2 = run_all_steps('High', 'CN', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# middle vs cn
+analysis_3 = run_all_steps('Middle', 'CN', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# Low vs cn
+analysis_4 = run_all_steps('Low', 'CN', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# # middle vs high
+# analysis_5 = run_all_steps('Middle', 'High', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# # Low vs high
+# analysis_6 = run_all_steps('Low', 'High', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+# # Low vs middle
+# analysis_7 = run_all_steps('Low', 'Middle', df, algorithm=RidgeClassifier(solver='lsqr', class_weight='balanced'))
+
+analyses = [analysis_2, analysis_3, analysis_4]
+dict_visualisation = {}
+for analysis in analyses:
+	print(analysis.title)
+	dict_visualisation[analysis.title] = analysis.all_accs
+	print('{} (n={}) vs {} (n={})'.format(analysis.label0, analysis.N0, analysis.label1, analysis.N1))
+	print("Main accuracy : Mean = ", np.mean(analysis.accs), " Std = ", np.std(analysis.accs))
+	print("Is accuracy significant => {}, percentile={} ".format(analysis.accuracy_testing()[0],analysis.accuracy_testing()[1]))
+
+df_visu = pd.DataFrame.from_dict(dict_visualisation)
+df_visu.to_pickle("_pickles/df_visu_gm_ridge")
+
+
+
+##############################################################
+# Visualize coefficients and accuracies across linear models #
+##############################################################
+
+df_coef_Low_logReg = pd.read_pickle('_pickles/gm_predictions/df_coefs_roi_Low_vs_CN_Logis')
+df_sign_coef_Low_logReg = pd.read_pickle('_pickles/gm_predictions/df_significant_roi_Low_vs_CN_Logis')
+df_coef_Low_svm = pd.read_pickle('_pickles/gm_predictions/df_coefs_roi_Low_vs_CN_Linea')
+df_sign_coef_Low_svm = pd.read_pickle('_pickles/gm_predictions/df_significant_roi_Low_vs_CN_Linea')
+df_coef_Low_ridge = pd.read_pickle('_pickles/gm_predictions/df_coefs_roi_Low_vs_CN_Ridge')
+df_sign_coef_Low_ridge = pd.read_pickle('_pickles/gm_predictions/df_significant_roi_Low_vs_CN_Ridge')
+
+
+# save all results as xlsx
+df_coef = pd.DataFrame(columns=['LogReg', 'SVM', 'Ridge'], index=df_coef_Low_logReg['Label'], data=np.array([df_coef_Low_logReg["coef"].values, df_coef_Low_svm["coef"].values, df_coef_Low_ridge["coef"].values]).T)
+df_coef.to_excel('_createdDataframes/log_svm_ridge_Coef.xlsx')
+df_sign = pd.DataFrame(columns=['LogReg', 'SVM', 'Ridge'], index=df_coef_Low_logReg['Label'], data=np.array([df_sign_coef_Low_logReg["coef"].values, df_sign_coef_Low_svm["coef"].values, df_sign_coef_Low_ridge["coef"].values]).T)
+df_sign.to_excel('_createdDataframes/log_svm_ridge_signCoef.xlsx')
+
+
+
+
+
+
+#################################
+#### CSF         ANALYSES #######
+#################################
+
 # run prediction analysis per group with csf as inputs #
-########################################################
 
 np.random.seed(0)
 
 df[['TAU', 'PTAU', 'ABETA']] = 0
-df_csf1 = pd.read_csv("filesFromADNI/ADNI_cognitiveTests/CSF.csv")
-df_csf2 = pd.read_csv("filesFromADNI/ADNI_cognitiveTests/csf_adni1_go_2.csv")
 col_csf_to_keep = ['RID', 'ABETA', 'TAU', 'PTAU']
 df_csf1 = df_csf1[col_csf_to_keep]
 df_csf2 = df_csf2[col_csf_to_keep]
@@ -338,7 +484,7 @@ for index in df.index:
             df.loc[index, ['TAU', 'PTAU', 'ABETA']] = df_csf[['TAU', 'PTAU', 'ABETA']].loc[index].mean().values
         else:
             df.loc[index, ['TAU', 'PTAU', 'ABETA']] = df_csf[['TAU', 'PTAU', 'ABETA']].loc[index].values
-print('missing {} participants'.format(len(missing)))
+print('missing {} participants'.format(len(missing))) # 319
 np.unique(df.loc[missing]['cluster'], return_counts=True)
 # np.unique(df.loc[missing]['Session'], return_counts=True)
 
@@ -351,25 +497,38 @@ data = StandardScaler().fit_transform(df_[df_.columns[:-1]].values)
 df_[df_.columns[:-1]] = data
 df_.to_pickle('_pickles/csf_level_std')
 
+# clean for age and gender
+df_scores['Sex'][df_scores['Sex']=='M']=0
+df_scores['Sex'][df_scores['Sex']=='F']=1
+
+# Merging to get info only for subject we have CSF information (708 sub)
+df_confounds = df_.join(df_scores[['Age', 'Sex']], how='inner')
+confounds = df_confounds[['Age', 'Sex']]
+# clean signal from confound explained variance
+FS_cleaned = clean(data, confounds=confounds.values, detrend=False)
+df_[df_.columns[:-1]] = FS_cleaned
+df_.to_pickle('_pickles/csf_level_std_cleaned')
+
+
 def run_all_steps(Y0, Y1, df):
-	analysis = prediction(Y0, Y1, df)
+	analysis = prediction(Y0, Y1, df, algorithm=LogisticRegression(penalty='l2', class_weight='balanced'))
 	print("   ***    ")
 	print("STARTING ", analysis.title)
 	print("   ***    ")
 	time.sleep(2)
-	analysis.runs(100)
+	analysis.runs(1000)
 	analysis.plot_confusion(csf=1)
-	analysis.lauch_permutation(100)
+	analysis.lauch_permutation(1000)
 	analysis.coefficent_testing()
 	analysis.print_results()
 	smwc1_path = 'fake'
 	analysis.saving(smwc1_path, csf=1)
 	return analysis
 
-
-analysis = prediction('SMC', 'CN', df_)
+stop
+# analysis = prediction('SMC', 'CN', df_)
 # smc vs cn
-analysis_1 = run_all_steps('SMC', 'CN', df_)
+# analysis_1 = run_all_steps('SMC', 'CN', df_)
 # high vs cn
 analysis_2 = run_all_steps('High', 'CN', df_)
 # middle vs cn
@@ -377,25 +536,44 @@ analysis_3 = run_all_steps('Middle', 'CN', df_)
 # Low vs cn
 analysis_4 = run_all_steps('Low', 'CN', df_)
 # middle vs high
-analysis_5 = run_all_steps('Middle', 'High', df_)
+# analysis_5 = run_all_steps('Middle', 'High', df_)
 # Low vs high
-analysis_6 = run_all_steps('Low', 'High', df_)
+# analysis_6 = run_all_steps('Low', 'High', df_)
 # Low vs middle
-analysis_7 = run_all_steps('Low', 'Middle', df_)
+# analysis_7 = run_all_steps('Low', 'Middle', df_)
 
 
 dict_visualisation = {}
-analyses = [analysis_1, analysis_2, analysis_3, analysis_4, analysis_5, analysis_6, analysis_7]
+analyses = [analysis_4]
 for analysis in analyses:
 	print(analysis.title)
 	print('{} (n={}) vs {} (n={})'.format(analysis.label0, analysis.N0, analysis.label1, analysis.N1))
 	print("Main accuracy : Mean = ", np.mean(analysis.accs), " Std = ", np.std(analysis.accs))
 	print("Is accuracy significant => {}, percentile={} ".format(analysis.accuracy_testing()[0],analysis.accuracy_testing()[1]))
-	print("Is accuracy significant => {}, percentile={} ".format(analysis.accuracy_testing()[0],analysis.accuracy_testing()[1]))
 	print("Significant coefficients => {} ".format(analysis.df_significant))
 	dict_visualisation[analysis.title] = analysis.all_accs
 df_visu = pd.DataFrame.from_dict(dict_visualisation)
 df_visu.to_pickle("_pickles/df_visu_csf")
+'''
+Is accuracy significant => False, percentile=62.440000000000005 
+Significant coefficients =>       coef
+TAU      0
+PTAU     0
+ABETA    0 
+Middle_vs_CN_Logis
+Middle (n=143) vs CN (n=215)
+Main accuracy : Mean =  0.6335194444444444  Std =  0.02326254324466431
+Is accuracy significant => False, percentile=98.9 
+Significant coefficients =>            coef
+TAU           0
+PTAU          0
+ABETA  0.388778 
+Low_vs_CN_Logis
+Low (n=186) vs CN (n=215)
+Main accuracy : Mean =  0.7088271604938271  Std =  0.02059818365641995
+Is accuracy significant => True, percentile=99.98 
+'''
+
 
 
 
@@ -405,9 +583,9 @@ df_visu.to_pickle("_pickles/df_visu_csf")
 # with standardized gm data
 
 # save mean (standardized value) of brain fro each group
-df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford')
+df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford_combat')
 # group label
-cluster = pd.read_excel('_createdDataframe/df_scores_std.xlsx', index_col=0)['cluster']
+cluster = pd.read_excel('_createdDataframes/df_scores_std.xlsx', index_col=0)['cluster']
 df['cluster'] = cluster
 
 low = df[df['cluster'] == 'Low'].mean().values.astype('float64').reshape(1, 96)+1
@@ -415,7 +593,7 @@ high = df[df['cluster'] == 'High'].mean().values.astype('float64').reshape(1, 96
 middle = df[df['cluster'] == 'Middle'].mean().values.astype('float64').reshape(1, 96)+1
 CN = df[df['cluster'] == 'CN'].mean().values.astype('float64').reshape(1, 96)+1
 atlas = ds.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm',  symmetric_split=True)
-smwc1_path = pd.read_excel('_createdDataframe/mri_paths.xlsx')['smwc1_path'].iloc[0]
+smwc1_path = pd.read_excel('_createdDataframes/mri_paths.xlsx')['smwc1_path'].iloc[0]
 nii = nib.load(smwc1_path)
 ratlas_nii = resample_img(
 	atlas.maps, target_affine=nii.affine, interpolation='nearest')
@@ -432,10 +610,6 @@ _nii.to_filename("_niftiFiles/CN_mean_std.nii") # transform as nii and save
 
 # with standardized gm data
 # save mean CN - mean group of brain for each MCI group
-df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford')
-# group label
-cluster = pd.read_excel('_createdDataframe/df_scores_std.xlsx', index_col=0)['cluster']
-df['cluster'] = cluster
 
 CN = df[df['cluster'] == 'CN'].mean().values.astype('float64').reshape(1, 96)+1
 low = df[df['cluster'] == 'Low'].mean().values.astype('float64').reshape(1, 96)+1
@@ -445,7 +619,7 @@ high = CN - high
 middle = df[df['cluster'] == 'Middle'].mean().values.astype('float64').reshape(1, 96)+1
 middle = CN - middle
 atlas = ds.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm',  symmetric_split=True)
-smwc1_path = pd.read_excel('_createdDataframe/mri_paths.xlsx')['smwc1_path'].iloc[0]
+smwc1_path = pd.read_excel('_createdDataframes/mri_paths.xlsx')['smwc1_path'].iloc[0]
 nii = nib.load(smwc1_path)
 ratlas_nii = resample_img(
 	atlas.maps, target_affine=nii.affine, interpolation='nearest')
@@ -461,11 +635,6 @@ _nii.to_filename("_niftiFiles/high_minusCN_std.nii") # transform as nii and save
 
 
 # with raw gm data
-# save mean CN - mean group of brain for each MCI group
-df = pd.read_pickle('_pickles/gm_atlas_harvard_oxford')
-# group label
-cluster = pd.read_excel('_createdDataframe/df_scores_std.xlsx', index_col=0)['cluster']
-df['cluster'] = cluster
 CN = df[df['cluster'] == 'CN'].mean().values.astype('float64').reshape(1, 96)
 low = df[df['cluster'] == 'Low'].mean().values.astype('float64').reshape(1, 96)
 low = CN - low
@@ -476,7 +645,7 @@ middle = CN - middle
 
 
 atlas = ds.fetch_atlas_harvard_oxford('cort-maxprob-thr25-2mm',  symmetric_split=True)
-smwc1_path = pd.read_excel('_createdDataframe/mri_paths.xlsx')['smwc1_path'].iloc[0]
+smwc1_path = pd.read_excel('_createdDataframes/mri_paths.xlsx')['smwc1_path'].iloc[0]
 nii = nib.load(smwc1_path)
 ratlas_nii = resample_img(
 	atlas.maps, target_affine=nii.affine, interpolation='nearest')

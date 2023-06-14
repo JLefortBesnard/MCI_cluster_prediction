@@ -1,4 +1,4 @@
-## Code for reproducing the key results of our paper: MCI cluster prediction
+## Code for reproducing the key results of our paper: Grey matter volume and CSF biomarkers predict neuropsychological subtypes of MCI
 
 Lefort-Besnard J, Naveau M, Delcroix N, Decker L, Cignetti F (for the ADNI)
 
@@ -13,6 +13,9 @@ Compute regression analyses for each MCI subgroup versus controls using GM or CS
 
 #### Benchmark.py: 
 Probing complex relationships among the grey matter rois
+
+#### multinomial_analyses.py
+Compute multiclass (One versus Rest) regression analyses for MCI subgroups using GM or CSF level
 
 ---
 

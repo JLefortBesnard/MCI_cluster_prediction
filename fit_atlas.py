@@ -1,8 +1,8 @@
 """
 Extract grey matter volume per ROI using Yeo atlas.
-Then standardize + remove variance from TIV and age.
+Then standardize + remove variance from TIV and age and MRI scanner magnet strength.
 Save ouputs as pickles in _pickles/
-2022
+2023
 Author:   
         Jeremy Lefort-Besnard   jlefortbesnard (at) tuta (dot) io
 duration : 3 hours 16 minutes
@@ -20,10 +20,20 @@ from nilearn import plotting
 from nilearn.image import resample_img
 from nilearn.input_data import NiftiLabelsMasker
 from nilearn.signal import clean
+from neurocombat_sklearn import CombatModel
 
 
 # reproducibility
 np.random.seed(0)
+
+
+# requited paths
+df = pd.read_excel('_createdDataframes/df_scores.xlsx', index_col=0) # 1032 participants 
+df['Sex'][df['Sex']=='M']=0
+df['Sex'][df['Sex']=='F']=1
+df['Session'][df['Session'] == "ADNI1"] = 1
+df['Session'][df['Session'] == "ADNI2"] = 2
+
 
 #######################################################
 # Class for extracting grey matter per roi from atlas #
@@ -143,7 +153,7 @@ class get_cleanedGM_per_roi:
 		self.df.to_pickle('_pickles/tiv')
  
 
-	def clean_signal(self, confounds):
+	def clean_signal(self, confounds, session):
 		''' clean signal using nilearn.signal.clean function.
 		Regressed out variance that could be explained by the factors confounds.
 		Data are standardized
@@ -164,9 +174,13 @@ class get_cleanedGM_per_roi:
 		confounds = self.df[confounds].values.astype('float64')
 		# clean signal from confound explained variance
 		FS_cleaned = clean(self.df_gm.values, confounds=confounds, detrend=False)
-		# store into a dataframe
-		self.df_gm_cleaned = pd.DataFrame(columns=self.df_gm.columns, index=self.df_gm.index, data=FS_cleaned)
-		# save as pickle
+
+		# Apply combat for cleaning ADNI session differences
+		model = CombatModel()
+		FS_cleaned_combat = model.fit_transform(FS_cleaned, session.reshape(-1, 1))
+
+		# store into a dataframe and save
+		self.df_gm_cleaned = pd.DataFrame(columns=self.df_gm.columns, index=self.df_gm.index, data=FS_cleaned_combat)
 		self.df_gm_cleaned.to_pickle('_pickles/gm_cleaned_atlas_harvard_oxford')
 
 
@@ -178,9 +192,28 @@ class get_cleanedGM_per_roi:
 #######################################################
 
 # fit atlas
-df = pd.read_excel('_createdDataframe/df_scores.xlsx', index_col=0) # 1032 participants 
 extract_gm_per_roi = get_cleanedGM_per_roi(df) # load class
 extract_gm_per_roi.compute_tiv() # 15 minutes
 extract_gm_per_roi.fit_atlas(show=True) # 3 hours
-confounds = ['Age', 'TIV']
-extract_gm_per_roi.clean_signal(confounds) # 30 seconds
+confounds = ['Age', 'TIV', 'Sex']
+extract_gm_per_roi.clean_signal(confounds, df['Session'].values) # 30 seconds
+
+
+
+######
+# short way : avoid reextracting gray matter and TIV which was previously ran
+######
+data = np.load("/home/jlefortb/ADNI_project/_pickles/gm_atlas_harvard_oxford", allow_pickle=True)
+tiv = np.load('/home/jlefortb/ADNI_project/_pickles/tiv', allow_pickle=True)['TIV'].values
+confounds = df[['Age', 'Sex']]
+confounds['Tiv'] = tiv
+# clean signal from confound explained variance
+FS_cleaned = clean(data.values, confounds=confounds.values, detrend=False)
+
+# Apply combat for cleaning ADNI session differences
+model = CombatModel()
+FS_cleaned_combat = model.fit_transform(FS_cleaned, df['Session'].values.reshape(-1, 1))
+
+# store into a dataframe and save
+df_gm_cleaned = pd.DataFrame(columns=data.columns, index=data.index, data=FS_cleaned_combat)
+df_gm_cleaned.to_pickle('_pickles/gm_cleaned_atlas_harvard_oxford_combat')

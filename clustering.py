@@ -1,6 +1,6 @@
 """
 Run clustering algorithm (n=3 according to R package nbclust) using MCI neuropsychological scores
-2022
+2023
 Author:   
         Jeremy Lefort-Besnard   jlefortbesnard (at) tuta (dot) io
 duration = 5 seconds
@@ -17,7 +17,7 @@ from sklearn.cluster import AgglomerativeClustering
 np.random.seed(0)
 
 # get the participant scores
-df_scores = pd.read_excel('_createdDataframe/df_scores.xlsx', index_col=0) # 1032 subjects
+df_scores = pd.read_excel('_createdDataframes/df_scores.xlsx', index_col=0) # 1032 subjects
 
 # rename lmci and emci as MCI
 df_scores['Group'][df_scores['Group'] == 'LMCI'] = 'MCI'
@@ -198,7 +198,7 @@ df_mci['cluster'][df_mci['cluster'] == index_middle] = 'Middle'
 df_scores_standardized['cluster'] = df_scores_standardized['Group'].values
 df_scores_standardized['cluster'].loc[list(df_mci['cluster'].index)] = df_mci['cluster']
 
-# df_scores_standardized.to_excel('_createdDataframe/df_scores_std.xlsx')
+df_scores_standardized.to_excel('_createdDataframes/df_scores_std.xlsx')
 
 
 # check significativity (circular but Leslie asked for it)
@@ -288,4 +288,5 @@ linkage_matrix = plot_dendrogram(model, truncate_mode="level",
     p=50, color_threshold=35, above_threshold_color="black")
 plt.axis('off')
 plt.savefig('_figures/dendogram.png')
+plt.savefig('_figures/figure1b.png')
 plt.show()

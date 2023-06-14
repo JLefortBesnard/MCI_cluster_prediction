@@ -1,7 +1,10 @@
-
-##############################################################
-## I: Probing complex relationships among the grey matter rois  ###
-##############################################################
+"""
+Run linear versus non-linear models benchmark for MCI subgroups versus controls
+2023
+Author:   
+        Jeremy Lefort-Besnard   jlefortbesnard (at) tuta (dot) io
+duration = 30min
+"""
 
 import numpy as np
 from scipy.stats import scoreatpercentile
@@ -48,6 +51,7 @@ def benchmark(X, y):
         test_accs = []
         for train_inds, test_inds in folder.split(X, y):
             clf.fit(X[train_inds], y[train_inds])
+            print(clf.best_estimator_)
             y_pred = clf.score(X[train_inds], y[train_inds])
             train_accs.append(y_pred)
             
@@ -99,7 +103,7 @@ def plot_violin(df, n, title):
     plt.legend(handles=[train_s, test_s], loc='lower left', prop={'size':20})
     plt.ylim(0.3, 1)
     plt.tight_layout()
-    plt.savefig('_figures/final_figs/{}.png'.format(title), DPI=400, facecolor='white')
+    plt.savefig('_figures/{}.png'.format(title), dpi=400, facecolor='white')
     plt.close('all')
 
 
@@ -112,9 +116,9 @@ def plot_violin(df, n, title):
 
 # load required dataframe
 # grey matter quantity per roi
-df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford')
+df = pd.read_pickle('_pickles/gm_cleaned_atlas_harvard_oxford_combat')
 # group label
-cluster = pd.read_excel('_createdDataframe/df_scores_std.xlsx', index_col=0)['cluster']
+cluster = pd.read_excel('_createdDataframes/df_scores_std.xlsx', index_col=0)['cluster']
 df['cluster'] = cluster
 
 front_lob_cn = df['Left Frontal Pole'][df["cluster"] == 'CN'].mean()
@@ -194,6 +198,7 @@ X_colnames = df_.columns[:-1]
 y = df_[df_.columns[-1]].astype('int64').values  # diagnosis
 
 df_, res_array = benchmark(X, y)
+
 plot_violin(df_, len(res_array), "benchmark_IRM_falsePositiveMCI")
 # quality check
 all_in['IRMfp'] = df_
@@ -291,6 +296,7 @@ plot_violin(df_, len(res_array), "benchmark_CSF_falsePositiveMCI")
 # quality check
 all_in['CSFfp'] = df_
 
+np.save("benchmark_results.npy", all_in)
 
 # check results
 for k in all_in.keys():
@@ -298,3 +304,4 @@ for k in all_in.keys():
     print(all_in[k]['test'].values)
     for e in all_in[k]['estimator']:
         print(np.mean(list(all_in[k][all_in[k]['estimator'] == e]['test'])))
+
