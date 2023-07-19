@@ -1,4 +1,4 @@
-## Code for reproducing the key results of our paper: Grey matter volume and CSF biomarkers predict neuropsychological subtypes of MCI
+### Code for reproducing the key results of our paper: <br>_Grey matter volume and CSF biomarkers predict neuropsychological subtypes of MCI_
 
 Lefort-Besnard J, Naveau M, Delcroix N, Decker L, Cignetti F (for the ADNI)
 
